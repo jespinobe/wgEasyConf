@@ -17,17 +17,28 @@ info() { echo -e "${CYAN}[i]${NC} $1" >&2; }
 
 check_deps() {
     local missing=()
-    for cmd in zbarcam nmcli wg; do
-        if ! command -v "$cmd" &>/dev/null; then
-            missing+=("$cmd")
-        fi
-    done
+    local packages=()
+
+    if ! command -v zbarcam &>/dev/null; then
+        missing+=("zbarcam")
+        packages+=("zbar-tools")
+    fi
+
+    if ! command -v nmcli &>/dev/null; then
+        missing+=("nmcli")
+        packages+=("network-manager")
+    fi
+
+    if ! command -v wg &>/dev/null; then
+        missing+=("wg")
+        packages+=("wireguard-tools")
+    fi
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         error "Dependencias faltantes: ${missing[*]}"
-        info "Instalando zbar-tools..."
-        sudo apt install -y zbar-tools || {
-            error "No se pudo instalar. Instala manualmente: sudo apt install zbar-tools"
+        info "Instalando: ${packages[*]}..."
+        sudo apt install -y "${packages[@]}" || {
+            error "No se pudo instalar. Instala manualmente: sudo apt install ${packages[*]}"
             exit 1
         }
     fi

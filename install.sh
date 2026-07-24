@@ -20,15 +20,60 @@ echo -e "${CYAN}  wgEasyConf - Instalador${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════${NC}"
 echo ""
 
-# 1. Install dependencies
-info "Instalando dependencias..."
+# 1. Check and install WireGuard dependencies
+info "Verificando dependencias de WireGuard..."
+
+PACKAGES_TO_INSTALL=()
+
+# Check wireguard-tools (provides wg command)
+if command -v wg &>/dev/null; then
+    log "wireguard-tools ya instalado ($(wg --version 2>/dev/null | head -1))"
+else
+    PACKAGES_TO_INSTALL+=("wireguard-tools")
+fi
+
+# Check zbar-tools (provides zbarcam)
 if command -v zbarcam &>/dev/null; then
     log "zbar-tools ya instalado"
 else
-    sudo apt install -y zbar-tools && log "zbar-tools instalado" || {
-        error "Error al instalar zbar-tools"
+    PACKAGES_TO_INSTALL+=("zbar-tools")
+fi
+
+# Check network-manager (provides nmcli)
+if command -v nmcli &>/dev/null; then
+    log "network-manager ya instalado"
+else
+    PACKAGES_TO_INSTALL+=("network-manager")
+fi
+
+# Check glib-compile-schemas
+if command -v glib-compile-schemas &>/dev/null; then
+    log "glib-compile-schemas ya instalado"
+else
+    PACKAGES_TO_INSTALL+=("libglib2.0-dev-bin")
+fi
+
+# Install missing packages
+if [[ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]]; then
+    info "Instalando paquetes faltantes: ${PACKAGES_TO_INSTALL[*]}"
+    sudo apt update -qq && sudo apt install -y "${PACKAGES_TO_INSTALL[@]}" && {
+        log "Paquetes instalados correctamente"
+    } || {
+        error "Error al instalar dependencias"
+        error "Instala manualmente: sudo apt install ${PACKAGES_TO_INSTALL[*]}"
         exit 1
     }
+fi
+
+# Check WireGuard kernel module
+info "Verificando módulo de kernel WireGuard..."
+if lsmod | grep -q wireguard; then
+    log "Módulo wireguard cargado"
+elif modprobe wireguard 2>/dev/null; then
+    log "Módulo wireguard cargado exitosamente"
+else
+    warn "No se pudo cargar módulo wireguard (puede requerir reinicio)"
+    warn "Asegúrate de tener un kernel con soporte WireGuard (4.12+)"
 fi
 
 # 2. Install backend script
@@ -52,9 +97,6 @@ cp "$SCRIPT_DIR/wgqr-scan@wgEasyConf/schemas/"*.xml "$EXT_DIR/schemas/"
 glib-compile-schemas "$EXT_DIR/schemas/" && log "Schemas compilados" || {
     warn "Error al compilar schemas (las preferencias pueden no funcionar)"
 }
-
-# Create icons directory (optional, for custom icon)
-mkdir -p "$EXT_DIR/icons"
 
 log "Extensión instalada en $EXT_DIR"
 
