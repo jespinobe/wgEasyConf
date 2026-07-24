@@ -1,0 +1,8 @@
+*.swp
+*.swo
+*~
+*.o
+*.so
+.gnupg/
+.cache/
+.local/

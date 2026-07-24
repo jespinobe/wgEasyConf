@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema path="/org/gnome/shell/extensions/wgqr-scan/" id="org.gnome.shell.extensions.wgqr-scan">
+    <key type="s" name="camera-device">
+      <default>''</default>
+      <summary>Camera device</summary>
+      <description>Path to the camera device for QR scanning (e.g. /dev/video0). Empty string means auto-detect.</description>
+    </key>
+  </schema>
+</schemalist>
