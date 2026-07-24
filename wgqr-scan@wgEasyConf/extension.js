@@ -102,9 +102,18 @@ class WgQrScanIndicator extends PanelMenu.Button {
                     if (type === 'wireguard') {
                         wgFound = true;
                         const statusIcon = active === 'yes' ? '✅ ' : '❌ ';
-                        const item = new PopupMenu.PopupMenuItem(`${statusIcon}${name}`);
-                        item.connect('activate', () => this._toggleConnection(name));
-                        this._connectionsSection.addMenuItem(item);
+                        const subMenu = new PopupMenu.PopupSubMenuMenuItem(`${statusIcon}${name}`);
+
+                        const toggleLabel = active === 'yes' ? _('Desconectar') : _('Conectar');
+                        const toggleItem = new PopupMenu.PopupMenuItem(toggleLabel);
+                        toggleItem.connect('activate', () => this._toggleConnection(name));
+                        subMenu.menu.addMenuItem(toggleItem);
+
+                        const deleteItem = new PopupMenu.PopupMenuItem(_('Eliminar...'));
+                        deleteItem.connect('activate', () => this._deleteConnection(name));
+                        subMenu.menu.addMenuItem(deleteItem);
+
+                        this._connectionsSection.addMenuItem(subMenu);
                     }
                 }
 
@@ -313,6 +322,69 @@ class WgQrScanIndicator extends PanelMenu.Button {
             this._refreshConnections();
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _deleteConnection(name) {
+        const dialog = new ModalDialog.ModalDialog({
+            styleClass: 'wg-easy-conf-dialog',
+        });
+
+        const contentBox = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            y_expand: true,
+            style: 'padding: 24px;',
+        });
+
+        const warningLabel = new St.Label({
+            text: _('¿Eliminar la conexión WireGuard?'),
+            style: 'font-size: 18px; font-weight: bold; text-align: center;',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        contentBox.add_child(warningLabel);
+
+        const nameLabel = new St.Label({
+            text: name,
+            style: 'font-size: 14px; text-align: center; margin-top: 8px;',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        contentBox.add_child(nameLabel);
+
+        const descLabel = new St.Label({
+            text: _('Esta acción no se puede deshacer.\nLa configuración se eliminará permanentemente.'),
+            style: 'font-size: 12px; text-align: center; margin-top: 16px;',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        contentBox.add_child(descLabel);
+
+        dialog.contentLayout.add_child(contentBox);
+
+        dialog.setButtons([
+            {
+                label: _('Cancelar'),
+                action: () => dialog.destroy(),
+            },
+            {
+                label: _('Eliminar'),
+                action: () => {
+                    try {
+                        GLib.spawn_command_line_sync(`nmcli connection delete "${name}"`);
+                        Main.notify('wgEasyConf', `Conexión eliminada: ${name}`);
+                    } catch (e) {
+                        console.error(`wgEasyConf: Error deleting connection: ${e.message}`);
+                        Main.notifyError('wgEasyConf', `Error al eliminar: ${e.message}`);
+                    }
+                    dialog.destroy();
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+                        this._updateIcon();
+                        this._refreshConnections();
+                        return GLib.SOURCE_REMOVE;
+                    });
+                },
+            },
+        ]);
+
+        dialog.open();
     }
 
     _showAboutDialog() {
