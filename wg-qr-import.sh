@@ -199,6 +199,68 @@ show_status() {
     echo "" >&2
 }
 
+is_wifi_qr() {
+    [[ "$1" =~ ^[Ww][Ii][Ff][Ii]: ]]
+}
+
+import_wifi() {
+    local qr_text="$1"
+    local ssid="" password="" type="WPA" hidden="no"
+    local field key value
+
+    IFS=';' read -ra fields <<< "$qr_text"
+    for field in "${fields[@]}"; do
+        [[ "$field" == *:* ]] || continue
+        key="${field%%:*}"
+        value="${field#*:}"
+        case "${key^^}" in
+            S) ssid="$value" ;;
+            P) password="$value" ;;
+            T) type="${value^^}" ;;
+            H) hidden="${value,,}" ;;
+        esac
+    done
+
+    if [[ -z "$ssid" ]]; then
+        error "El QR WiFi no tiene SSID válido"
+        return 1
+    fi
+
+    if nmcli connection show "$ssid" &>/dev/null; then
+        warn "Ya existe una conexión con el nombre '$ssid'"
+        read -rp "¿Sobrescribir? (s/N): " overwrite
+        if [[ "$overwrite" =~ ^[sS]$ ]]; then
+            nmcli connection delete "$ssid" &>/dev/null
+            log "Conexión anterior eliminada"
+        else
+            info "Operación cancelada"
+            return 1
+        fi
+    fi
+
+    if [[ "$type" == "NOPASS" ]]; then
+        nmcli connection add type wifi con-name "$ssid" ssid "$ssid" &>/dev/null || {
+            error "Error al crear red abierta '$ssid'"
+            return 1
+        }
+    else
+        if [[ -z "$password" ]]; then
+            error "El QR WiFi no tiene contraseña"
+            return 1
+        fi
+        local keymgmt="wpa-psk"
+        [[ "$type" == "WEP" ]] && keymgmt="wep"
+        nmcli connection add type wifi con-name "$ssid" ssid "$ssid" \
+            wifi-sec.key-mgmt "$keymgmt" wifi-sec.psk "$password" &>/dev/null || {
+            error "Error al crear red '$ssid'"
+            return 1
+        }
+    fi
+
+    log "Red WiFi '$ssid' creada correctamente"
+    return 0
+}
+
 main() {
     local CAMERA_OVERRIDE=""
 
@@ -238,6 +300,14 @@ main() {
     local qr_text
     qr_text=$(capture_qr "$camera") || exit 1
     log "QR capturado correctamente"
+
+    if is_wifi_qr "$qr_text"; then
+        log "QR de red WiFi detectado"
+        import_wifi "$qr_text" || exit 1
+        log "Proceso completado"
+        info "La red WiFi está disponible en GNOME Settings → Red → Wi-Fi"
+        exit 0
+    fi
 
     validate_wg_config "$qr_text" || exit 1
     log "Configuración WireGuard válida"

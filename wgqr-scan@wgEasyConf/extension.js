@@ -45,7 +45,7 @@ class WgQrScanIndicator extends PanelMenu.Button {
     }
 
     _buildMenu() {
-        this._scanItem = new PopupMenu.PopupMenuItem(_('Escanear QR WireGuard'));
+        this._scanItem = new PopupMenu.PopupMenuItem(_('Escanear QR (WiFi/WireGuard)'));
         const scanIcon = new St.Icon({
             icon_name: 'scanner-symbolic',
             style_class: 'popup-menu-icon',
@@ -92,6 +92,7 @@ class WgQrScanIndicator extends PanelMenu.Button {
             if (ok) {
                 const lines = output.toString().trim().split('\n');
                 let wgFound = false;
+                let wifiFound = false;
 
                 for (const line of lines) {
                     const parts = line.split(':');
@@ -189,7 +190,7 @@ class WgQrScanIndicator extends PanelMenu.Button {
                         } else {
                             if (this._scanning) {
                                 this._scanning = false;
-                                this._scanItem.label.set_text(_('Escanear QR WireGuard'));
+                                this._scanItem.label.set_text(_('Escanear QR (WiFi/WireGuard)'));
                                 if (qrData.trim().length > 0) {
                                     this._processQR(qrData.trim());
                                 } else {
@@ -200,7 +201,7 @@ class WgQrScanIndicator extends PanelMenu.Button {
                     } catch (e) {
                         if (this._scanning) {
                             this._scanning = false;
-                            this._scanItem.label.set_text(_('Escanear QR WireGuard'));
+                            this._scanItem.label.set_text(_('Escanear QR (WiFi/WireGuard)'));
                             if (qrData.trim().length > 0) {
                                 this._processQR(qrData.trim());
                             } else {
@@ -216,7 +217,7 @@ class WgQrScanIndicator extends PanelMenu.Button {
                 if (this._scanning) {
                     try { proc.force_exit(); } catch (_e) { /* process already exited */ }
                     this._scanning = false;
-                    this._scanItem.label.set_text(_('Escanear QR WireGuard'));
+                    this._scanItem.label.set_text(_('Escanear QR (WiFi/WireGuard)'));
                     Main.notifyError('wgEasyConf', _('Timeout: no se detectó QR'));
                 }
                 return GLib.SOURCE_REMOVE;
@@ -226,7 +227,7 @@ class WgQrScanIndicator extends PanelMenu.Button {
             console.error(`wgEasyConf: Failed to start zbarcam: ${e.message}`);
             Main.notifyError('wgEasyConf', `Error al iniciar zbarcam: ${e.message}`);
             this._scanning = false;
-            this._scanItem.label.set_text(_('Escanear QR WireGuard'));
+            this._scanItem.label.set_text(_('Escanear QR (WiFi/WireGuard)'));
         }
     }
 
@@ -236,8 +237,13 @@ class WgQrScanIndicator extends PanelMenu.Button {
             return;
         }
 
+        if (qrText.toUpperCase().startsWith('WIFI:')) {
+            this._processWifiQR(qrText);
+            return;
+        }
+
         if (!qrText.includes('[Interface')) {
-            Main.notifyError('wgEasyConf', _('El QR no contiene una configuración WireGuard válida'));
+            Main.notifyError('wgEasyConf', _('QR no reconocido. Soporta WiFi y WireGuard.'));
             return;
         }
 
@@ -289,6 +295,64 @@ class WgQrScanIndicator extends PanelMenu.Button {
             this._refreshConnections();
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _processWifiQR(qrText) {
+        // WIFI:T:<WPA|WEP|nopass>;S:<ssid>;P:<password>;H:<hidden>;;
+        const params = {};
+        const re = /([STPH]):([^;]*)/g;
+        let m;
+        while ((m = re.exec(qrText)) !== null) {
+            params[m[1]] = m[2];
+        }
+
+        const ssid = params['S'] || '';
+        if (!ssid) {
+            Main.notifyError('wgEasyConf', _('El QR WiFi no tiene SSID válido'));
+            return;
+        }
+
+        // Check if connection already exists
+        const [existsOk, existsOutput] = GLib.spawn_command_line_sync(
+            `nmcli -t -f NAME connection show | grep -qi "^${ssid}$" && echo "yes" || echo "no"`
+        );
+
+        if (existsOutput.toString().trim() === 'yes') {
+            Main.notify('wgEasyConf', `La red "${ssid}" ya está configurada`);
+            this._activateConnection(ssid);
+            return;
+        }
+
+        const type = (params['T'] || 'WPA').toUpperCase();
+        const isOpen = type === 'NOPASS';
+
+        let cmd;
+        if (isOpen) {
+            cmd = `nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}"`;
+        } else {
+            const keyMgmt = type === 'WEP' ? 'wep' : 'wpa-psk';
+            const password = params['P'] || '';
+            if (!password) {
+                Main.notifyError('wgEasyConf', _('El QR WiFi no tiene contraseña'));
+                return;
+            }
+            cmd = `nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" ` +
+                  `wifi-sec.key-mgmt ${keyMgmt} wifi-sec.psk "${password}"`;
+        }
+
+        const [importOk, importOutput] = GLib.spawn_command_line_sync(cmd);
+
+        if (!importOk) {
+            Main.notifyError('wgEasyConf', `Error al agregar red WiFi: ${importOutput}`);
+            return;
+        }
+
+        this._activateConnection(ssid);
+    }
+
+    _activateConnection(name) {
+        GLib.spawn_command_line_async(`nmcli connection up "${name}"`);
+        Main.notify('wgEasyConf', `Conectando: ${name}`);
     }
 
     _toggleConnection(name) {
