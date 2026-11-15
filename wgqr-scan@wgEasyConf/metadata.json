@@ -2,9 +2,10 @@
   "name": "WireGuard QR Scanner",
   "description": "Scan WireGuard QR codes and import VPN configurations to NetworkManager",
   "uuid": "wgqr-scan@wgEasyConf",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
-  "url": "",
-  "version": 2,
+  "shell-version": ["48", "49", "50", "51"],
+  "url": "https://github.com/jespinobe/wgEasyConf",
+  "version": 3,
+  "version-name": "1.1.0",
   "gettext-domain": "wgqr-scan-wgEasyConf",
   "settings-schema": "org.gnome.shell.extensions.wgqr-scan"
 }

@@ -144,15 +144,22 @@ import_to_nm() {
     tmpfile=$(mktemp /tmp/wg-qr-XXXXXX.conf)
     echo "$config" > "$tmpfile"
 
-    local import_output
-    import_output=$(nmcli connection import type wireguard file "$tmpfile" 2>&1) || {
+    local before after
+    before=$(nmcli -t -f NAME connection show 2>/dev/null | sort || true)
+
+    if ! nmcli connection import type wireguard file "$tmpfile" &>/dev/null; then
         rm -f "$tmpfile"
         error "Error al importar configuración a NetworkManager"
         return 1
-    }
+    fi
 
+    after=$(nmcli -t -f NAME connection show 2>/dev/null | sort || true)
+
+    # Find the connection that appeared after the import instead of parsing
+    # localized output (the «name» quoting changes with the locale).
     local imported_name
-    imported_name=$(echo "$import_output" | grep -oP '(?<=«)[^»]+')
+    imported_name=$(comm -13 <(echo "$before") <(echo "$after") | head -n1)
+    imported_name=$(printf '%s' "$imported_name" | sed 's/\\\(.\)/\1/g')
 
     rm -f "$tmpfile"
 
@@ -162,8 +169,7 @@ import_to_nm() {
     fi
 
     if [[ "$imported_name" != "$con_name" ]]; then
-        nmcli connection modify "$imported_name" connection.id "$con_name" &>/dev/null
-        nmcli connection modify "$con_name" connection.interface-name "$con_name" &>/dev/null
+        nmcli connection modify id "$imported_name" connection.id "$con_name" &>/dev/null
     fi
 
     log "Conexión '$con_name' creada exitosamente"
@@ -173,7 +179,7 @@ import_to_nm() {
 test_connection() {
     local con_name="$1"
     info "Activando conexión..."
-    if nmcli connection up "$con_name" &>/dev/null; then
+    if nmcli connection up id "$con_name" &>/dev/null; then
         log "Conexión activada"
         local first_ip
         first_ip=$(echo "$WG_ALLOWED_IPS" | cut -d',' -f1 | cut -d'/' -f1)
@@ -200,37 +206,77 @@ show_status() {
 }
 
 is_wifi_qr() {
-    [[ "$1" =~ ^[Ww][Ii][Ff][Ii]: ]]
+    [[ "${1^^}" == WIFI:* ]]
+}
+
+# Assign a parsed WIFI: field to the global variables.
+_wifi_assign() {
+    local key="${1^^}"
+    local value="$2"
+
+    case "$key" in
+        S) SSID="$value" ;;
+        P) PASSWORD="$value" ;;
+        T) WIFI_TYPE="${value^^}" ;;
+        H)
+            if [[ "${value,,}" == "true" || "${value,,}" == "yes" || "$value" == "1" ]]; then
+                WIFI_HIDDEN="yes"
+            else
+                WIFI_HIDDEN="no"
+            fi
+            ;;
+    esac
+}
+
+# Parse a WIFI: QR payload honouring the standard \; \, \: \\ escapes.
+# Sets SSID, PASSWORD, WIFI_TYPE and WIFI_HIDDEN.
+parse_wifi_qr() {
+    local payload="${1#*:}"
+    local key="" value="" reading_key=1 escaped=0 i ch
+
+    SSID="" PASSWORD="" WIFI_TYPE="WPA" WIFI_HIDDEN="no"
+
+    for ((i = 0; i < ${#payload}; i++)); do
+        ch="${payload:i:1}"
+        if (( escaped )); then
+            value+="$ch"
+            escaped=0
+        elif [[ "$ch" == '\' ]]; then
+            escaped=1
+        elif (( reading_key )); then
+            case "$ch" in
+                :) reading_key=0 ;;
+                ';') key="" value="" ;;
+                *) key+="$ch" ;;
+            esac
+        elif [[ "$ch" == ';' ]]; then
+            [[ -n "$key" ]] && _wifi_assign "$key" "$value"
+            key="" value="" reading_key=1
+        else
+            value+="$ch"
+        fi
+    done
+
+    if [[ -n "$key" ]] && (( ! reading_key )); then
+        _wifi_assign "$key" "$value"
+    fi
 }
 
 import_wifi() {
     local qr_text="$1"
-    local ssid="" password="" type="WPA" hidden="no"
-    local field key value
 
-    IFS=';' read -ra fields <<< "$qr_text"
-    for field in "${fields[@]}"; do
-        [[ "$field" == *:* ]] || continue
-        key="${field%%:*}"
-        value="${field#*:}"
-        case "${key^^}" in
-            S) ssid="$value" ;;
-            P) password="$value" ;;
-            T) type="${value^^}" ;;
-            H) hidden="${value,,}" ;;
-        esac
-    done
+    parse_wifi_qr "$qr_text"
 
-    if [[ -z "$ssid" ]]; then
+    if [[ -z "$SSID" ]]; then
         error "El QR WiFi no tiene SSID válido"
         return 1
     fi
 
-    if nmcli connection show "$ssid" &>/dev/null; then
-        warn "Ya existe una conexión con el nombre '$ssid'"
+    if nmcli connection show id "$SSID" &>/dev/null; then
+        warn "Ya existe una conexión con el nombre '$SSID'"
         read -rp "¿Sobrescribir? (s/N): " overwrite
         if [[ "$overwrite" =~ ^[sS]$ ]]; then
-            nmcli connection delete "$ssid" &>/dev/null
+            nmcli connection delete id "$SSID" &>/dev/null
             log "Conexión anterior eliminada"
         else
             info "Operación cancelada"
@@ -238,26 +284,44 @@ import_wifi() {
         fi
     fi
 
-    if [[ "$type" == "NOPASS" ]]; then
-        nmcli connection add type wifi con-name "$ssid" ssid "$ssid" &>/dev/null || {
-            error "Error al crear red abierta '$ssid'"
-            return 1
-        }
-    else
-        if [[ -z "$password" ]]; then
+    local add_args=(connection add type wifi con-name "$SSID" ssid "$SSID")
+
+    [[ "$WIFI_HIDDEN" == "yes" ]] && add_args+=(wifi.hidden yes)
+
+    if [[ "$WIFI_TYPE" != "NOPASS" ]]; then
+        if [[ -z "$PASSWORD" ]]; then
             error "El QR WiFi no tiene contraseña"
             return 1
         fi
-        local keymgmt="wpa-psk"
-        [[ "$type" == "WEP" ]] && keymgmt="wep"
-        nmcli connection add type wifi con-name "$ssid" ssid "$ssid" \
-            wifi-sec.key-mgmt "$keymgmt" wifi-sec.psk "$password" &>/dev/null || {
-            error "Error al crear red '$ssid'"
-            return 1
-        }
+
+        if [[ "$WIFI_TYPE" == "WEP" ]]; then
+            # WEP keys are 5/13 ASCII chars or 10/26 hex digits; anything
+            # else is passed as a passphrase so NM can derive the key.
+            local key_type=2
+            if [[ "$PASSWORD" =~ ^([0-9a-fA-F]{10}|[0-9a-fA-F]{26}|[[:print:]]{5}|[[:print:]]{13})$ ]]; then
+                key_type=1
+            fi
+            add_args+=(wifi-sec.key-mgmt wep
+                wifi-sec.wep-key-type "$key_type"
+                wifi-sec.wep-key0 "$PASSWORD")
+        else
+            add_args+=(wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PASSWORD")
+        fi
     fi
 
-    log "Red WiFi '$ssid' creada correctamente"
+    nmcli "${add_args[@]}" &>/dev/null || {
+        error "Error al crear red '$SSID'"
+        return 1
+    }
+
+    log "Red WiFi '$SSID' creada correctamente"
+
+    if nmcli connection up id "$SSID" &>/dev/null; then
+        log "Red WiFi '$SSID' activada"
+    else
+        warn "La red se creó, pero no se pudo activar (¿fuera de cobertura?)"
+    fi
+
     return 0
 }
 
@@ -331,11 +395,11 @@ main() {
         error "El nombre no puede estar vacío"
     done
 
-    if nmcli connection show "$con_name" &>/dev/null; then
+    if nmcli connection show id "$con_name" &>/dev/null; then
         warn "Ya existe una conexión con el nombre '$con_name'"
         read -rp "¿Sobrescribir? (s/N): " overwrite
         if [[ "$overwrite" =~ ^[sS]$ ]]; then
-            nmcli connection delete "$con_name" &>/dev/null
+            nmcli connection delete id "$con_name" &>/dev/null
             log "Conexión anterior eliminada"
         else
             info "Operación cancelada"
@@ -359,7 +423,7 @@ main() {
     case "$choice" in
         1) log "Conexión '$con_name' mantenida activa" ;;
         2)
-            nmcli connection down "$con_name" &>/dev/null
+            nmcli connection down id "$con_name" &>/dev/null
             log "Conexión '$con_name' desconectada"
             ;;
         3)

@@ -15,6 +15,15 @@ info() { echo -e "${CYAN}[i]${NC} $1"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# This version of the extension targets GNOME Shell 48 and newer
+if command -v gnome-shell &>/dev/null; then
+    SHELL_MAJOR="$(gnome-shell --version 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+    if [[ -n "$SHELL_MAJOR" && "$SHELL_MAJOR" -lt 48 ]]; then
+        error "GNOME Shell $SHELL_MAJOR no está soportado (se requiere 48 o superior)"
+        exit 1
+    fi
+fi
+
 echo -e "${CYAN}═══════════════════════════════════════════${NC}"
 echo -e "${CYAN}  wgEasyConf - Instalador${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════${NC}"
@@ -46,11 +55,11 @@ else
     PACKAGES_TO_INSTALL+=("network-manager")
 fi
 
-# Check glib-compile-schemas
+# Check glib-compile-schemas (provided by libglib2.0-bin on Debian/Ubuntu)
 if command -v glib-compile-schemas &>/dev/null; then
     log "glib-compile-schemas ya instalado"
 else
-    PACKAGES_TO_INSTALL+=("libglib2.0-dev-bin")
+    PACKAGES_TO_INSTALL+=("libglib2.0-bin")
 fi
 
 # Install missing packages
@@ -85,15 +94,10 @@ log "Script instalado en /usr/local/bin/wg-qr-import.sh"
 info "Instalando extensión GNOME..."
 EXT_DIR="$HOME/.local/share/gnome-shell/extensions/wgqr-scan@wgEasyConf"
 mkdir -p "$EXT_DIR"
-cp "$SCRIPT_DIR/wgqr-scan@wgEasyConf/metadata.json" "$EXT_DIR/"
-cp "$SCRIPT_DIR/wgqr-scan@wgEasyConf/extension.js" "$EXT_DIR/"
-cp "$SCRIPT_DIR/wgqr-scan@wgEasyConf/prefs.js" "$EXT_DIR/"
-cp "$SCRIPT_DIR/wgqr-scan@wgEasyConf/stylesheet.css" "$EXT_DIR/"
+cp -a "$SCRIPT_DIR/wgqr-scan@wgEasyConf/." "$EXT_DIR/"
 
 # Create and compile schemas
 info "Compilando schemas..."
-mkdir -p "$EXT_DIR/schemas"
-cp "$SCRIPT_DIR/wgqr-scan@wgEasyConf/schemas/"*.xml "$EXT_DIR/schemas/"
 glib-compile-schemas "$EXT_DIR/schemas/" && log "Schemas compilados" || {
     warn "Error al compilar schemas (las preferencias pueden no funcionar)"
 }

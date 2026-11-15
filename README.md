@@ -9,7 +9,7 @@ Herramienta para escanear códigos QR de redes **WiFi** y configuraciones **Wire
 
 ## Requisitos
 
-- GNOME Shell 45+
+- GNOME Shell 48, 49, 50 o 51
 - NetworkManager con soporte WireGuard
 - `zbar-tools` (`sudo apt install zbar-tools`)
 - Cámara web compatible con V4L2
@@ -20,7 +20,13 @@ Herramienta para escanear códigos QR de redes **WiFi** y configuraciones **Wire
 ./install.sh
 ```
 
-Reiniciar la sesión GNOME después de instalar.
+Reiniciar la sesión GNOME después de instalar. Si la extensión ya estaba
+instalada, también puede recargarse con:
+
+```bash
+gnome-extensions disable wgqr-scan@wgEasyConf
+gnome-extensions enable wgqr-scan@wgEasyConf
+```
 
 ## Uso
 
